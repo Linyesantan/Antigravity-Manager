@@ -3587,7 +3587,12 @@ async fn admin_toggle_proxy_status(
     })?;
 
     // 同步到运行中的反代服务
-    let _ = state.token_manager.reload_account(&account_id).await;
+    state.token_manager.reload_account(&account_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
 
     Ok(StatusCode::OK)
 }

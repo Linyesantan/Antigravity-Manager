@@ -120,6 +120,34 @@ mod tests {
     }
 
     #[test]
+    fn manual_pause_preserves_credentials_and_blocks_background_access() {
+        let _guard = SHARED_TEST_ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("ABV_DATA_DIR");
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+        let account = upsert_account(
+            "pause-test@example.com".to_string(),
+            None,
+            TokenData::new("access".into(), "refresh".into(), 3600, None, None, None, true, None),
+        ).unwrap();
+        let token_before = serde_json::to_value(&account.token).unwrap();
+        for reason in [None, Some("manual_disable"), Some("custom user pause")] {
+            toggle_proxy_status(&account.id, false, reason).unwrap();
+            assert!(ensure_background_access_allowed(&account.id).is_err());
+            let paused = load_account(&account.id).unwrap();
+            assert_eq!(serde_json::to_value(&paused.token).unwrap(), token_before);
+            toggle_proxy_status(&account.id, true, None).unwrap();
+            assert!(ensure_background_access_allowed(&account.id).is_ok());
+            assert_eq!(serde_json::to_value(&load_account(&account.id).unwrap().token).unwrap(), token_before);
+        }
+        assert!(ensure_background_access_allowed("missing-account").is_err());
+        match previous {
+            Some(value) => std::env::set_var("ABV_DATA_DIR", value),
+            None => std::env::remove_var("ABV_DATA_DIR"),
+        }
+    }
+
+    #[test]
     fn test_resolve_account_summary_by_index_email_name_and_round_robin() {
         let accounts = vec![
             crate::models::AccountSummary {
@@ -4515,7 +4543,16 @@ pub fn set_account_index_proxy_disabled(account_id: &str, disabled: bool) -> Res
     Ok(())
 }
 
-/// Toggle proxy disabled status for an account
+/// Fail closed before contacting upstream for a paused account.
+pub fn ensure_background_access_allowed(account_id: &str) -> Result<(), String> {
+    let account = load_account(account_id)?;
+    if account.background_access_blocked() {
+        return Err("Account is disabled; background access is paused".to_string());
+    }
+    Ok(())
+}
+
+/// Toggle proxy access without touching OAuth credentials.
 pub fn toggle_proxy_status(
     account_id: &str,
     enable: bool,
@@ -4530,6 +4567,7 @@ pub fn toggle_proxy_status_with_intent(
     reason: Option<&str>,
     manual_intent: bool,
 ) -> Result<(), String> {
+    let _account_write = lock_account_file_updates()?;
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
@@ -4561,7 +4599,7 @@ pub fn toggle_proxy_status_with_intent(
     }
     account.proxy_disabled = !enable;
     account.proxy_disabled_reason = if !enable {
-        reason.map(|s| s.to_string())
+        Some(reason.unwrap_or("manual_disable").to_string())
     } else {
         None
     };
@@ -5418,6 +5456,8 @@ pub async fn fetch_quota_with_retry_ext(
     use crate::error::AppError;
     use crate::modules::oauth;
 
+    ensure_background_access_allowed(&account.id).map_err(AppError::Account)?;
+
     // 1. Time-based check - ensure Token is valid first
     let token = match oauth::ensure_fresh_token(&account.token, Some(&account.id)).await {
         Ok(t) => t,
@@ -5900,8 +5940,9 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     let filtered_accounts: Vec<_> = accounts
         .into_iter()
         .filter(|account| {
-            // [MOD] Now we allow refreshing disabled and proxy_disabled accounts
-            // to support forced re-sync from UI.
+            if account.background_access_blocked() {
+                return false;
+            }
             //
             // 只跳过「验证封禁仍在生效期内」的账号。封禁过期后必须放行刷新 —— 刷新
             // 正是判断"还封不封"的手段；跳过它会让 quota.is_forbidden 永远是 true：

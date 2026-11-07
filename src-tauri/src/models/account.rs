@@ -621,6 +621,18 @@ pub struct Account {
 }
 
 impl Account {
+    /// Automatic quota/validation recovery must not override a user's pause.
+    pub fn background_access_blocked(&self) -> bool {
+        self.disabled
+            || (self.proxy_disabled
+                && !self.proxy_disabled_reason.as_deref().map_or(false, |reason| {
+                    reason == "quota_protection"
+                        || reason.starts_with("Forbidden (403)")
+                        || reason.contains("403 Forbidden")
+                        || reason.contains("VALIDATION_REQUIRED")
+                }))
+    }
+
     pub fn new(id: String, email: String, token: TokenData) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
