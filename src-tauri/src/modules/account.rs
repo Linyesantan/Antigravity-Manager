@@ -4567,7 +4567,6 @@ pub fn toggle_proxy_status_with_intent(
     reason: Option<&str>,
     manual_intent: bool,
 ) -> Result<(), String> {
-    let _account_write = lock_account_file_updates()?;
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
