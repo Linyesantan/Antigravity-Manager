@@ -597,6 +597,9 @@ pub async fn refresh_access_token_with_client(
     account_id: Option<&str>,
     preferred_client_key: Option<&str>,
 ) -> Result<TokenResponse, String> {
+    if let Some(id) = account_id {
+        crate::modules::account::ensure_background_access_allowed(id)?;
+    }
     let candidates = get_candidate_clients(preferred_client_key);
     if candidates.is_empty() {
         return Err("No OAuth clients configured".to_string());
@@ -715,6 +718,9 @@ pub async fn ensure_fresh_token(
     current_token: &crate::models::TokenData,
     account_id: Option<&str>,
 ) -> Result<crate::models::TokenData, String> {
+    if let Some(id) = account_id {
+        crate::modules::account::ensure_background_access_allowed(id)?;
+    }
     let now = chrono::Local::now().timestamp();
 
     // Keep enough validity to avoid immediate post-switch refresh failure.

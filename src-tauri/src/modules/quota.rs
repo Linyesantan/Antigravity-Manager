@@ -301,6 +301,11 @@ pub async fn fetch_quota_with_cache(
 ) -> crate::error::AppResult<(QuotaData, Option<String>)> {
     use crate::error::AppError;
 
+    if let Some(id) = account_id {
+        crate::modules::account::ensure_background_access_allowed(id)
+            .map_err(AppError::Account)?;
+    }
+
     // `loadCodeAssist` 是订阅等级的唯一权威来源，必须每次都调用。
     //
     // 历史实现为了「省一次 API 调用」，在 project_id 已缓存且账号已有 tier 时直接跳过
@@ -930,7 +935,11 @@ pub async fn fetch_all_quotas(
 pub async fn get_valid_token_for_warmup(
     account: &crate::models::account::Account,
 ) -> Result<(String, String), String> {
-    let mut account = account.clone();
+    // Reload after queueing so a concurrent manual pause wins over a stale snapshot.
+    let mut account = crate::modules::account::load_account(&account.id)?;
+    if account.disabled || account.proxy_disabled {
+        return Err("Account is disabled".to_string());
+    }
 
     // Check and auto-refresh token
     let new_token =
@@ -939,7 +948,13 @@ pub async fn get_valid_token_for_warmup(
     // If token changed (meant refreshed), save it
     if new_token.access_token != account.token.access_token {
         account.token = new_token;
-        if let Err(e) = crate::modules::account::save_account(&account) {
+        let save_result = (|| -> Result<(), String> {
+            let _guard = crate::modules::account::lock_account_file_updates()?;
+            let mut latest = crate::modules::account::load_account(&account.id)?;
+            latest.token = account.token.clone();
+            crate::modules::account::save_account(&latest)
+        })();
+        if let Err(e) = save_result {
             crate::modules::logger::log_warn(&format!(
                 "[Warmup] Failed to save refreshed token: {}",
                 e

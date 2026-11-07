@@ -65,6 +65,20 @@ pub async fn handle_warmup(
 ) -> Response {
     let start_time = std::time::Instant::now();
 
+    // Supplied credentials must not bypass the persisted manual pause.
+    let account_id = crate::modules::account::find_account_id_by_email(&req.email);
+    for id in account_id.as_deref().into_iter().chain(req.account_id.as_deref()) {
+        match crate::modules::account::load_account(id) {
+            Ok(account) if !account.disabled && !account.proxy_disabled => {}
+            _ => {
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"success": false, "error": "Account is disabled or unavailable"})),
+                ).into_response();
+            }
+        }
+    }
+
     let mapped_model = {
         let custom_mapping = state.custom_mapping.read().await;
         crate::proxy::common::model_mapping::resolve_model_route_with_effort(

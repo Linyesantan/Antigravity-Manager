@@ -506,6 +506,7 @@ impl TokenManager {
 
         let refresh_op = async {
             let _guard = refresh_mu.lock().await;
+            crate::modules::account::ensure_background_access_allowed(account_id)?;
 
             let now = chrono::Utc::now().timestamp();
             if let Some(latest) = self.tokens.get(account_id) {
@@ -5685,6 +5686,11 @@ impl TokenManager {
     }
 
     async fn send_pure_hello_probe_internal(token: &ProxyToken) -> Result<f64, String> {
+        if Self::get_account_state_on_disk(&token.account_path).await
+            != OnDiskAccountState::Enabled
+        {
+            return Err("Account is disabled or unavailable; skipping probe".to_string());
+        }
         let model = Self::select_probe_model(token)
             .ok_or_else(|| format!("探针跳过：账号 {} 缺少可用模型元数据", token.email))?;
         let body = Self::build_probe_envelope(token, &model);
