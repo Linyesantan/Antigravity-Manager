@@ -3014,7 +3014,6 @@ pub fn toggle_proxy_status(
     enable: bool,
     reason: Option<&str>,
 ) -> Result<(), String> {
-    let _account_write = lock_account_file_updates()?;
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
