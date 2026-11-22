@@ -299,7 +299,7 @@ impl ProxyToken {
 
     /// Debug/测试专用：校验族级窗口快照与 reset map 的最小截止时间一致。
     /// Release 构建不包含该方法，不会影响线上行为。
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, test))]
     pub fn assert_quota_state_consistent(&self) {
         for family in ["argon", "3p", "gemini"] {
             let Some(windows) = self.model_quota_windows.get(family) else {
